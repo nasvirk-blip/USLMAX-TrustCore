@@ -1,0 +1,8 @@
+{
+  "name": "nurture-core",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@it/runtime": "^2.3.0"
+  }
+}
