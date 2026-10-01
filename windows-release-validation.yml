@@ -1,0 +1,283 @@
+name: Windows release validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  windows-install-validation:
+    name: Windows install (${{ matrix.name }})
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: powershell-5.1
+            host: powershell.exe
+            node-version: 22.12.0
+          - name: powershell-7
+            host: pwsh.exe
+            node-version: 24
+
+    steps:
+      - name: Checkout release candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Run clean-checkout native validation
+        shell: powershell
+        env:
+          VALIDATION_HOST: ${{ matrix.host }}
+          VALIDATION_NAME: ${{ matrix.name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runner = Join-Path $env:GITHUB_WORKSPACE 'scripts\cross-platform-benchmark\run-windows-validation.ps1'
+          $artifacts = Join-Path $env:GITHUB_WORKSPACE 'windows-validation-artifacts'
+          & $env:VALIDATION_HOST -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File $runner `
+            -SourceRepo $env:GITHUB_WORKSPACE `
+            -ArtifactPath $artifacts `
+            -PowerShellPath $env:VALIDATION_HOST `
+            -RunName $env:VALIDATION_NAME `
+            -UseSourceRepoInPlace
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            throw "[$env:VALIDATION_NAME][$env:VALIDATION_HOST] Windows release validation failed with exit code $exitCode"
+          }
+
+      - name: Enable the pinned pnpm release guard
+        if: success() && matrix.name == 'powershell-7'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.26.1
+
+      - name: Verify Windows release summary rendering (${{ matrix.name }})
+        if: success() && matrix.name == 'powershell-7'
+        shell: powershell
+        run: pnpm test:windows-summary
+
+      - name: Run the credential-free release guard
+        if: success() && matrix.name == 'powershell-7'
+        shell: powershell
+        run: pnpm test:release-gate
+
+      - name: Typecheck and build the apps on Windows
+        if: success() && matrix.name == 'powershell-7'
+        shell: powershell
+        run: |
+          pnpm -w run typecheck
+          $env:PORT = '3000'
+          $env:BASE_PATH = '/'
+          pnpm --filter @workspace/k-code-studio run build
+          pnpm --filter @workspace/api-server run build
+
+      - name: Upload Windows validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-validation-${{ matrix.name }}
+          path: windows-validation-artifacts/${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-affinity-wrapper-validation:
+    name: Windows CPU-affinity wrapper (${{ matrix.name }})
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: powershell-5.1
+            host: powershell.exe
+            node-version: 22.12.0
+          - name: powershell-7
+            host: pwsh.exe
+            node-version: 24
+
+    steps:
+      - name: Checkout release candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Enable pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.26.1
+
+      - name: Generate the fixture and validate the wrapper on this real Windows host (${{ matrix.name }})
+        shell: powershell
+        env:
+          VALIDATION_HOST: ${{ matrix.host }}
+          VALIDATION_NAME: ${{ matrix.name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $runner = Join-Path $env:GITHUB_WORKSPACE 'scripts\hardware-setup\run-windows-affinity-validation.ps1'
+          $fixtureDir = Join-Path $env:GITHUB_WORKSPACE 'windows-affinity-fixture'
+          $evidencePath = Join-Path $fixtureDir 'windows-affinity-validation.json'
+          & $env:VALIDATION_HOST -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File $runner `
+            -SourceRepo $env:GITHUB_WORKSPACE `
+            -FixtureDir $fixtureDir `
+            -EvidencePath $evidencePath `
+            -PowerShellPath $env:VALIDATION_HOST
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            throw "[$env:VALIDATION_NAME][$env:VALIDATION_HOST] Windows CPU-affinity wrapper validation failed with exit code $exitCode"
+          }
+
+      - name: Upload Windows CPU-affinity wrapper evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-affinity-wrapper-validation-${{ matrix.name }}
+          path: windows-affinity-fixture/windows-affinity-validation.json
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-affinity-wrapper-multi-core-validation:
+    name: Windows CPU-affinity multi-core slices (${{ matrix.name }})
+    # This label must name an enabled organization larger runner with four
+    # vCPUs and the Windows Server 2025 image.
+    runs-on: windows-2025-4core
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: powershell-5.1
+            host: powershell.exe
+          - name: powershell-7
+            host: pwsh.exe
+
+    steps:
+      - name: Checkout release candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node 22.12.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+
+      - name: Enable pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.26.1
+
+      - name: Validate multi-core affinity slices on the four-vCPU host (${{ matrix.name }})
+        shell: powershell
+        env:
+          VALIDATION_HOST: ${{ matrix.host }}
+          VALIDATION_NAME: ${{ matrix.name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $runner = Join-Path $env:GITHUB_WORKSPACE 'scripts\hardware-setup\run-windows-affinity-validation.ps1'
+          $fixtureDir = Join-Path $env:GITHUB_WORKSPACE "windows-affinity-multi-core-fixture\$env:VALIDATION_NAME"
+          $evidencePath = Join-Path $fixtureDir 'windows-affinity-validation.json'
+          & $env:VALIDATION_HOST -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File $runner `
+            -SourceRepo $env:GITHUB_WORKSPACE `
+            -FixtureDir $fixtureDir `
+            -EvidencePath $evidencePath `
+            -FixtureShape multi-core `
+            -PowerShellPath $env:VALIDATION_HOST
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            throw "[$env:VALIDATION_NAME][$env:VALIDATION_HOST] Windows CPU-affinity multi-core validation failed with exit code $exitCode"
+          }
+
+      - name: Upload Windows CPU-affinity multi-core evidence (${{ matrix.name }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-affinity-wrapper-multi-core-validation-${{ matrix.name }}
+          path: windows-affinity-multi-core-fixture/${{ matrix.name }}/windows-affinity-validation.json
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-runner-shadow-comparison:
+    name: Compare Windows runner-shadow evidence
+    if: always()
+    needs: windows-install-validation
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout release candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download host validation evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: windows-validation-*
+          path: windows-validation-download
+          merge-multiple: false
+
+      - name: Write metadata-only runner-shadow comparison
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $reports = @(
+            Get-ChildItem -LiteralPath 'windows-validation-download' `
+              -Filter 'windows-validation.json' -File -Recurse |
+              ForEach-Object { $_.FullName }
+          )
+          $output = Join-Path $env:GITHUB_WORKSPACE 'windows-validation-comparison/windows-runner-shadow-comparison.json'
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File (Join-Path $env:GITHUB_WORKSPACE 'scripts\cross-platform-benchmark\run-windows-validation.ps1') `
+            -CompareOnly `
+            -ArtifactPath (Join-Path $env:GITHUB_WORKSPACE 'windows-validation-download') `
+            -ComparisonOutputPath $output `
+            -ComparisonReportPaths $reports
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows runner-shadow comparison failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Add runner-shadow scope to job summary
+        if: always()
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $summaryPath = $env:GITHUB_STEP_SUMMARY
+          $comparisonPath = Join-Path $env:GITHUB_WORKSPACE 'windows-validation-comparison/windows-runner-shadow-comparison.json'
+          if ([string]::IsNullOrWhiteSpace($summaryPath)) {
+            throw 'GITHUB_STEP_SUMMARY is unavailable'
+          }
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File (Join-Path $env:GITHUB_WORKSPACE 'scripts\cross-platform-benchmark\run-windows-validation.ps1') `
+            -SummaryOnly `
+            -SourceRepo $env:GITHUB_WORKSPACE `
+            -ComparisonInputPath $comparisonPath `
+            -SummaryPath $summaryPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows runner-shadow summary failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Upload runner-shadow comparison
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-validation-runner-shadow-comparison
+          path: windows-validation-comparison
+          if-no-files-found: error
+          retention-days: 14

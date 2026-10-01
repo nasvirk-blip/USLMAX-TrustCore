@@ -1,8 +1,38 @@
 {
-  "name": "nurture-core",
-  "version": "1.0.0",
+  "name": "@workspace/scripts",
+  "version": "0.0.0",
   "private": true,
+  "type": "module",
+  "scripts": {
+    "setup-cycle-agent": "tsx ./setup-cycle/local-setup-agent.ts",
+    "test:setup-cycle": "tsx --test ./setup-cycle/*.test.ts",
+    "hello": "tsx ./src/hello.ts",
+    "it-authenticated": "tsx ./it-authenticated.ts",
+    "it-transport-load": "tsx ./it-transport-load.ts",
+    "it-transport-parity": "tsx ./it-transport-parity.ts",
+    "test:ip-counsel": "tsx --test ./check-ip-counsel-boundary.test.ts",
+    "test:windows-install": "tsx --test ./check-package-manager.test.ts",
+    "test:windows-syntax": "tsx --test ./windows-powershell-syntax.test.ts",
+    "test:hardware-affinity": "tsx --test ./hardware-setup/affinity-wrapper.test.ts ./hardware-setup/local-scan-server.test.mjs",
+    "generate:windows-affinity-fixture": "tsx ./hardware-setup/generate-windows-affinity-fixture.ts",
+    "test:packaged-advisory": "tsx --test ./recovery-advisory-packaged.test.ts",
+    "test:cross-comp-interop": "tsx --test ./cross-platform-interop.test.ts",
+    "test:cross-platform-load": "tsx --test ./cross-platform-load.test.ts",
+    "test": "tsx --test ./*.test.ts",
+    "test:public-navigation": "tsx ./public-navigation-keyboard.test.ts",
+    "it-authenticated:release": "IT_AUTH_RELEASE_CHECK=1 tsx ./it-authenticated.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
   "dependencies": {
-    "@it/runtime": "^2.3.0"
+    "@workspace/db": "workspace:*",
+    "@workspace/hardware-affinity": "workspace:*",
+    "@workspace/oa-it": "workspace:*",
+    "@workspace/oa-it-setup-cycle": "workspace:*",
+    "net-snmp": "^3.29.1"
+  },
+  "devDependencies": {
+    "@types/net-snmp": "^3.23.0",
+    "@types/node": "catalog:",
+    "tsx": "catalog:"
   }
 }
